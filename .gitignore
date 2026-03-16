@@ -1,0 +1,10 @@
+node_modules/
+dist/
+session.json
+*.log
+intercepted_search_api.json
+search_page_dump.html
+urn_script_dump.json
+matches.txt
+.DS_Store
+.env
