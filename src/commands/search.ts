@@ -27,7 +27,6 @@ export const searchCommand = new Command('search')
         return;
       }
 
-      // Construct LinkedIn search URL
       let searchUrl = `https://www.linkedin.com/search/results/all/?keywords=${query}`;
       if (options.type === 'people') {
         searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${query}`;
@@ -35,190 +34,151 @@ export const searchCommand = new Command('search')
         searchUrl = `https://www.linkedin.com/search/results/content/?keywords=${query}`;
       }
 
-      // Listen to network to catch GraphQL/Voyager responses containing Post Data
-      const interceptedPosts: any[] = [];
+      const extractedApiPosts: any[] = [];
+      const extractedResults: any[] = [];
+      const seenContentHashes = new Set<string>();
+      const seenUrls = new Set<string>();
+
       page.on('response', async (response) => {
         const url = response.url();
-        if (url.includes('/api/graphql') || url.includes('/api/voyager')) {
+        if (options.type === 'posts' && (url.includes('/api/graphql') || url.includes('/api/voyager') || url.includes('/api/search'))) {
            try {
              const json = await response.json();
-             const jsonStr = JSON.stringify(json);
-             if (jsonStr.includes('urn:li:activity:')) {
-                 interceptedPosts.push(jsonStr);
-             }
+             const walkJson = (obj: any) => {
+                if (!obj || typeof obj !== 'object') return;
+                
+                let urn = obj.entityUrn || obj.urn || (obj.updateMetadata && obj.updateMetadata.urn);
+                if (urn && typeof urn === 'string' && (urn.includes('urn:li:activity:') || urn.includes('urn:li:ugcPost:'))) {
+                   const cleanUrn = urn.replace(/%3A/g, ':');
+                   const idMatch = cleanUrn.match(/(?:activity|ugcPost):(\d+)/);
+                   
+                   if (idMatch) {
+                       const standardizedUrn = `urn:li:${cleanUrn.includes('ugcPost') ? 'ugcPost' : 'activity'}:${idMatch[1]}`;
+                       
+                       let entry = extractedApiPosts.find(p => p.urn === standardizedUrn);
+                       if (!entry) {
+                           entry = { urn: standardizedUrn, text: "", author: "" };
+                           extractedApiPosts.push(entry);
+                       }
+                       
+                       // Accumulate text from various possible locations in the JSON
+                       if (obj.commentary?.text?.text) entry.text = obj.commentary.text.text;
+                       else if (obj.value?.com?.linkedin?.voyager?.dash?.feed?.Update?.commentary?.text?.text) entry.text = obj.value.com.linkedin.voyager.dash.feed.Update.commentary.text.text;
+                       else if (obj.summary?.text?.text) entry.text = obj.summary.text.text;
+                       else if (obj.text?.text) entry.text = obj.text.text;
+
+                       // Accumulate author
+                       if (obj.actor?.name?.text) entry.author = obj.actor.name.text;
+                       else if (obj.title?.text) entry.author = obj.title.text;
+                   }
+                }
+
+                for (const key of Object.keys(obj)) {
+                    walkJson(obj[key]);
+                }
+             };
+             walkJson(json);
            } catch (e) {}
         }
       });
 
-      // Go to search page directly
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+      let pageNum = 1;
+      let iterationsWithNoNewResults = 0;
       
-      // Wait for initial load
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      const extractedResults: any[] = [];
-      const seenUrls = new Set<string>();
-      const seenContentHashes = new Set<string>();
-
-      // Gradually scroll down to trigger lazy loading of posts and extract continuously
-      for (let i = 0; i < 20; i++) {
-        await page.evaluate(() => {
-            // Scroll the main window
-            window.scrollBy(0, 1000);
-            
-            // Scroll the specific list container which usually holds the elements
-            const containers = document.querySelectorAll('.scaffold-layout__main, .search-results-container, ul, .scaffold-layout__list');
-            containers.forEach(c => {
-                c.scrollBy(0, 1000);
-                c.scrollTop = c.scrollHeight;
-            });
-            
-            document.documentElement.scrollTop = document.documentElement.scrollHeight;
-        });
-        await new Promise(resolve => setTimeout(resolve, 800));
-
-        // Try to click "Next" page or "Show more results" if it exists
-        try {
-           const nextButton = await page.$('button[aria-label="Next"], button.artdeco-pagination__button--next');
-           if (nextButton) {
-               const isDisabled = await page.evaluate(btn => btn.hasAttribute('disabled'), nextButton);
-               if (!isDisabled) {
-                   await nextButton.click();
-                   await new Promise(resolve => setTimeout(resolve, 2000));
-               }
-           }
-        } catch(e) {}
-
-        const batch = (await page.evaluate(async (t: string, l: number, apiData: string[]) => {
-            const results: any[] = [];
-            const type = t;
-            const limit = l;
-
-            if (type === 'people') {
-              const personLinks = Array.from(document.querySelectorAll('a[href*="linkedin.com/in/"]')) as HTMLAnchorElement[];
-              for (const link of personLinks) {
-                const url = link.href.split('?')[0];
-                if (url.includes('/overlay/')) continue;
-                
-                const name = link.textContent?.trim();
-                if (!name || name === 'LinkedIn' || name.length > 50) continue;
-                
-                let subtitle = '';
-                const container = link.closest('li') || link.closest('.reusable-search__result-container') || (link.parentElement ? link.parentElement.parentElement : null);
-                if (container) {
-                   const texts = (container as HTMLElement).innerText.split('\\n').map(s => s.trim()).filter(Boolean);
-                   const nameIdx = texts.findIndex(t => t.includes(name));
-                   if (nameIdx !== -1 && texts.length > nameIdx + 1) {
-                      subtitle = texts[nameIdx + 1];
-                   }
-                }
-                results.push({ type: 'person', url, name, subtitle });
-              }
-            } else {
-              // Extract posts using author links and walking up the DOM (since class names are obfuscated)
-              const authorLinks = Array.from(document.querySelectorAll('a[href*="linkedin.com/in/"], a[href*="linkedin.com/company/"]')) as HTMLAnchorElement[];
-              for (const link of authorLinks) {
-                const url = link.href.split('?')[0];
-                const authorName = link.textContent?.trim() || '';
-                if (!authorName || authorName.length > 50) continue;
-
-                let container: HTMLElement | null = link.parentElement as HTMLElement | null;
-                let foundValidContainer = false;
-                for (let i=0; i<8; i++) {
-                   if (container && container.innerText && container.innerText.length > 100) {
-                      if (container.innerText.includes('Like') && container.innerText.includes('Comment')) {
-                         foundValidContainer = true;
-                         break;
-                      }
-                   }
-                   if (container) container = container.parentElement as HTMLElement | null;
-                }
-
-                if (foundValidContainer && container) {
-                   const text = container.innerText || '';
-                   const hash = text.substring(0, 100);
-
-                   const lines = text.split('\\n').map(s => s.trim()).filter(Boolean);
-                   const snippetForMatch = lines.slice(0, 5).join(' ').substring(0, 50);
-                   
-                   let postUrl = '';
-
-                   // Since LinkedIn obfuscates class names and removes URNs from the DOM tree,
-                   // but keeps them in the initial `window.__como_rehydration__` JSON script payload,
-                   // we can match the author name or a snippet of the text to find the nearest URN
-                   // in the raw page source.
-                   const rawPageSource = document.documentElement.innerHTML;
-                   
-                   // Try to find the JSON block containing the author name
-                   const parts = rawPageSource.split(authorName);
-                   if (parts.length > 1) {
-                       for (let p = 1; p < parts.length; p++) {
-                           // Look behind or ahead in the JSON payload for the nearest urn:li:activity
-                           const textContext = parts[p].substring(0, 2000);
-                           const matchAhead = textContext.match(/urn(?:%3A|:)li(?:%3A|:)activity(?:%3A|:)(\\d+)/);
-                           if (matchAhead) {
-                               postUrl = `https://www.linkedin.com/feed/update/urn:li:activity:${matchAhead[1]}/`;
-                               break;
-                           }
-                           
-                           // Sometimes the URN is declared right *before* the author name in the JSON array
-                           const textBehind = parts[p-1].slice(-2000);
-                           const matchesBehind = Array.from(textBehind.matchAll(/urn(?:%3A|:)li(?:%3A|:)activity(?:%3A|:)(\\d+)/g));
-                           if (matchesBehind.length > 0) {
-                               const lastMatch = matchesBehind[matchesBehind.length - 1];
-                               postUrl = `https://www.linkedin.com/feed/update/urn:li:activity:${lastMatch[1]}/`;
-                               break;
-                           }
+      while (extractedResults.length < limit && iterationsWithNoNewResults < 4) {
+          const currentUrl = pageNum === 1 ? searchUrl : `${searchUrl}&page=${pageNum}`;
+          await page.goto(currentUrl, { waitUntil: 'domcontentloaded' });
+          await new Promise(resolve => setTimeout(resolve, 5000)); // crucial to wait for API
+          
+          if (options.type === 'people') {
+              // People extraction via DOM
+              await page.evaluate(() => window.scrollBy(0, 1000));
+              await new Promise(resolve => setTimeout(resolve, 1500));
+              
+              const batch = (await page.evaluate(() => {
+                  const results: any[] = [];
+                  const personLinks = Array.from(document.querySelectorAll('a[href*="linkedin.com/in/"]')) as HTMLAnchorElement[];
+                  for (const link of personLinks) {
+                    const url = link.href.split('?')[0];
+                    if (url.includes('/overlay/')) continue;
+                    
+                    const name = link.textContent?.trim();
+                    if (!name || name === 'LinkedIn' || name.length > 50) continue;
+                    
+                    let subtitle = '';
+                    const container = link.closest('li') || link.closest('.reusable-search__result-container') || (link.parentElement ? link.parentElement.parentElement : null);
+                    if (container) {
+                       const texts = (container as HTMLElement).innerText.split('\n').map(s => s.trim()).filter(Boolean);
+                       const nameIdx = texts.findIndex(t => t.includes(name));
+                       if (nameIdx !== -1 && texts.length > nameIdx + 1) {
+                          subtitle = texts[nameIdx + 1];
                        }
-                   }
-
-                   const fallbackUrl = url.endsWith('/') ? `${url}recent-activity/all/` : `${url}/recent-activity/all/`;
-                   const finalPostUrl = postUrl || fallbackUrl;
-                   
-                   results.push({
-                     type: 'post',
-                     postUrl: finalPostUrl,
-                     hash,
-                     author: { name: authorName, url },
-                     text: lines.slice(0, 10).join('\\n') + (lines.length > 10 ? '...' : '')
-                   });
-                }
+                    }
+                    results.push({ type: 'person', url, name, subtitle });
+                  }
+                  return results;
+              })) as any[];
+              
+              let newAdded = 0;
+              for (const item of batch) {
+                  if (extractedResults.length >= limit) break;
+                  if (!seenUrls.has(item.url)) {
+                      seenUrls.add(item.url);
+                      extractedResults.push(item);
+                      newAdded++;
+                  }
               }
-            }
-            return results;
-        }, options.type, limit, interceptedPosts)) as any[];
+              if (newAdded === 0) iterationsWithNoNewResults++;
+              else iterationsWithNoNewResults = 0;
 
-        for (const item of batch) {
-            if (extractedResults.length >= limit) break;
-            
-            if (item.type === 'person') {
-                if (!seenUrls.has(item.url)) {
-                    seenUrls.add(item.url);
-                    extractedResults.push(item);
-                }
-            } else {
-                const dedupeKey = item.postUrl || item.hash;
-                if (!seenContentHashes.has(dedupeKey)) {
-                    seenContentHashes.add(dedupeKey);
-                    delete item.hash; // clean up before output
-                    extractedResults.push(item);
-                }
-            }
-        }
+          } else {
+              // Scroll to bottom to trigger any lazy API calls
+              await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+              await new Promise(resolve => setTimeout(resolve, 2000));
 
-        if (extractedResults.length >= limit) break;
-        
-        try {
-           const nextButton = await page.$('button[aria-label="Next"]');
-           if (nextButton) {
-               await nextButton.click();
-               await new Promise(resolve => setTimeout(resolve, 1500));
-           }
-        } catch(e) {}
+              let newAdded = 0;
+              
+              // Process the newly intercepted items accumulated in extractedApiPosts
+              for (const item of extractedApiPosts) {
+                  if (extractedResults.length >= limit) break;
+                  
+                  // Only consider posts that actually have text or an author
+                  if (item.text || item.author) {
+                      const postUrl = `https://www.linkedin.com/feed/update/${item.urn}/`;
+                      
+                      if (!seenContentHashes.has(postUrl)) {
+                          seenContentHashes.add(postUrl);
+                          extractedResults.push({
+                              type: 'post',
+                              postUrl,
+                              author: { name: item.author || "Unknown", url: '' },
+                              text: item.text.substring(0, 500) + (item.text.length > 500 ? '...' : '')
+                          });
+                          newAdded++;
+                      } else {
+                          // Merge better data
+                          const existing = extractedResults.find(r => r.postUrl === postUrl);
+                          if (existing) {
+                              if (existing.author.name === "Unknown" && item.author) existing.author.name = item.author;
+                              if (existing.text.length < item.text.length) existing.text = item.text.substring(0, 500) + (item.text.length > 500 ? '...' : '');
+                          }
+                      }
+                  }
+              }
+              
+              if (newAdded === 0) iterationsWithNoNewResults++;
+              else iterationsWithNoNewResults = 0;
+          }
+          
+          pageNum++;
       }
 
       await browser.close();
-      outputJson({ success: true, data: extractedResults });
+      
+      // Cleanup empty/useless nodes that snuck in if we hit the limit
+      const cleanedData = extractedResults.filter(r => r.type === 'person' || (r.text && r.text.length > 5));
+
+      outputJson({ success: true, data: cleanedData.slice(0, limit) });
       return;
 
     } catch (error: any) {

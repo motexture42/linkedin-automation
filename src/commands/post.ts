@@ -37,8 +37,22 @@ export const postCommand = new Command('post')
       await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded' });
 
       try {
-        await page.waitForSelector('button.share-box-feed-entry__trigger', { timeout: 15000 });
-        await page.click('button.share-box-feed-entry__trigger');
+        // Find the "Start a post" button dynamically based on text content instead of a brittle class name
+        await page.waitForFunction(() => {
+             const spans = Array.from(document.querySelectorAll('span')).filter(s => s.innerText === 'Start a post');
+             return spans.length > 0;
+        }, { timeout: 15000 });
+        
+        await page.evaluate(() => {
+             const spans = Array.from(document.querySelectorAll('span')).filter(s => s.innerText === 'Start a post');
+             if (spans.length > 0) {
+                  let p: any = spans[0];
+                  while (p && p.tagName !== 'BUTTON') {
+                       p = p.parentElement;
+                  }
+                  if (p) p.click();
+             }
+        });
       } catch (err) {
         outputError('Could not find the start post button.', 2);
         if (browser) await browser.close();
@@ -74,6 +88,7 @@ export const postCommand = new Command('post')
         const editorSelector = '.ql-editor';
         await page.waitForSelector(editorSelector, { timeout: 5000 });
         await page.click(editorSelector);
+        // Sometimes Puppeteer type misses characters in rich text editors, so we delay
         await page.type(editorSelector, text, { delay: 50 });
       } catch (e) {
         outputError('Could not find text editor area in modal', 2);
@@ -81,26 +96,40 @@ export const postCommand = new Command('post')
         return;
       }
 
+      let postUrl: string | null = null;
       // Click Post button
       try {
+        // First make sure the button isn't disabled (requires some content to be active)
         await page.waitForSelector('.share-actions__primary-action:not([disabled])', { timeout: 5000 });
         
-        // Use keyboard shortcut on Mac/Windows
-        const isMac = process.platform === 'darwin';
-        if (isMac) {
-          await page.keyboard.down('Meta');
-          await page.keyboard.press('Enter');
-          await page.keyboard.up('Meta');
-        } else {
-          await page.keyboard.down('Control');
-          await page.keyboard.press('Enter');
-          await page.keyboard.up('Control');
+        // Find the Post button explicitly
+        await page.evaluate(() => {
+             const buttons = Array.from(document.querySelectorAll('button.share-actions__primary-action')) as HTMLButtonElement[];
+             for (const b of buttons) {
+                  if (b.innerText.includes('Post') && !b.hasAttribute('disabled')) {
+                       b.click();
+                       break;
+                  }
+             }
+        });
+
+        // Wait for Toast notification to extract the created Post URL
+        for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            postUrl = await page.evaluate(() => {
+                const toastLinks = Array.from(document.querySelectorAll('.artdeco-toast-item a'));
+                for (const link of toastLinks) {
+                    if ((link as HTMLAnchorElement).href.includes('/feed/update/urn:li:')) {
+                        return (link as HTMLAnchorElement).href;
+                    }
+                }
+                return null;
+            });
+            if (postUrl) break;
         }
 
-        // Wait for modal to disappear or toast
-        await new Promise(r => setTimeout(r, 4000));
       } catch (e) {
-        outputError('Failed to click post button', 3);
+        outputError('Failed to click post button or capture post URL', 3);
         if (browser) await browser.close();
         return;
       }
@@ -108,7 +137,8 @@ export const postCommand = new Command('post')
       await browser.close();
       outputJson({ 
         success: true, 
-        message: 'Post created successfully.'
+        message: 'Post created successfully.',
+        data: postUrl ? { postUrl } : undefined
       });
 
     } catch (error: any) {
