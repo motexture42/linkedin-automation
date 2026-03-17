@@ -2,6 +2,8 @@
 
 A robust, stealthy command-line interface for LinkedIn automation. Designed specifically to be used as a reliable tool by external AI agents using browser automation with advanced anti-bot evasion techniques. All commands output structured JSON, making it perfectly suited for script integration and programmatic workflows.
 
+> **⚠️ WARNING:** Using browser automation tools on LinkedIn violates their Terms of Service. Even with stealth plugins, LinkedIn employs sophisticated bot detection and may issue warnings, restrict, or permanently ban your account. **Use this tool entirely at your own risk.**
+
 ## Features
 - 🔐 **Persistent Authentication:** Saves session cookies locally to `session.json` to bypass repetitive logins.
 - 📜 **Feed Extraction:** Scrolls and extracts your LinkedIn feed.
