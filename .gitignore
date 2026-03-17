@@ -7,5 +7,7 @@ search_page_dump.html
 urn_script_dump.json
 matches.txt
 .DS_Store
-.env\n# Gemini CLI Persona\nPERSONA.md
+.env
+# Gemini CLI Persona
+PERSONA.md
 interactions.json
