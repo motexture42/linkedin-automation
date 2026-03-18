@@ -7,9 +7,9 @@ export const messageCommand = new Command('message')
   .description('Send a direct message to a connection')
   .requiredOption('-u, --url <string>', 'LinkedIn Profile URL of the recipient')
   .requiredOption('-m, --message <string>', 'The message to send')
-  .option('--headless <boolean>', 'Run in headless mode', 'false')
+  .option('--headless <boolean>', 'Run in headless mode', 'true')
   .action(async (options) => {
-    const headless = options.headless === 'true';
+    const headless = options.headless !== 'false';
     const profileUrl = options.url;
     const messageText = options.message;
     

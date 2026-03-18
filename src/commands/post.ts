@@ -9,10 +9,9 @@ export const postCommand = new Command('post')
   .description('Create a new post on LinkedIn')
   .requiredOption('-t, --text <text>', 'Text content of the post')
   .option('-m, --media <path>', 'Path to an image to attach')
-  .option('--headless <boolean>', 'Run in headless mode', 'false')
+  .option('--headless <boolean>', 'Run in headless mode', 'true')
   .action(async (options) => {
-    // Force visible mode to avoid easy detection for write actions
-    const headless = options.headless === 'true';
+    const headless = options.headless !== 'false';
     const text = options.text;
     const mediaPath = options.media ? path.resolve(process.cwd(), options.media) : null;
 

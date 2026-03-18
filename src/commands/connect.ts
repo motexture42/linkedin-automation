@@ -7,9 +7,9 @@ export const connectCommand = new Command('connect')
   .description('Send a connection request to a user')
   .requiredOption('-u, --url <string>', 'LinkedIn Profile URL')
   .option('-m, --message <string>', 'Optional personalized note')
-  .option('--headless <boolean>', 'Run in headless mode', 'false')
+  .option('--headless <boolean>', 'Run in headless mode', 'true')
   .action(async (options) => {
-    const headless = options.headless === 'true';
+    const headless = options.headless !== 'false';
     const profileUrl = options.url;
     
     let browser, page;

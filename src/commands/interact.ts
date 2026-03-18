@@ -11,9 +11,9 @@ export const interactCommand = new Command('interact')
   .option('--reply-to <urn>', 'The URN of the specific comment you want to reply to')
   .option('--reply <string>', 'The text to reply to the specific comment')
   .option('--repost', 'Repost the post')
-  .option('--headless <boolean>', 'Run in headless mode', 'false')
+  .option('--headless <boolean>', 'Run in headless mode', 'true')
   .action(async (options) => {
-    const headless = options.headless === 'true';
+    const headless = options.headless !== 'false';
     let postUrl = options.url;
     
     // We need to do at least one action
