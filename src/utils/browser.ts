@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page } from 'puppeteer';
 import fs from 'fs';
+import path from 'path';
 
 // Add stealth plugin to puppeteer
 puppeteer.use(StealthPlugin());
@@ -20,9 +21,16 @@ function getChromeExecutablePath() {
 export async function launchBrowser(headless: boolean = true): Promise<{ browser: Browser; page: Page }> {
   const executablePath = getChromeExecutablePath();
   
+  // Define a persistent directory for the browser profile to enable caching
+  const userDataDir = path.join(process.cwd(), '.browser_data');
+  if (!fs.existsSync(userDataDir)) {
+    fs.mkdirSync(userDataDir, { recursive: true });
+  }
+  
   const browser = await puppeteer.launch({
     headless: (headless ? 'new' : false) as any,
     executablePath: executablePath || undefined,
+    userDataDir: userDataDir, // Use persistent cache
     defaultViewport: null, // Let viewport adjust naturally
     args: [
       '--no-sandbox',
