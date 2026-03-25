@@ -1,8 +1,22 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { Page, Cookie } from 'puppeteer';
 
-const SESSION_FILE = path.join(process.cwd(), 'session.json');
+function getSessionFile(): string {
+  try {
+    const { app } = require('electron');
+    if (app && app.getPath) return path.join(app.getPath('userData'), 'session.json');
+  } catch (e) {}
+  // Fallback: same OS-standard path as db.ts so the MCP server (no Electron
+  // context) always resolves to the same location regardless of process.cwd().
+  const isWin = os.platform() === 'win32';
+  const isMac = os.platform() === 'darwin';
+  if (isWin && process.env.APPDATA) return path.join(process.env.APPDATA, 'Klinqd', 'session.json');
+  if (isMac) return path.join(os.homedir(), 'Library', 'Application Support', 'Klinqd', 'session.json');
+  return path.join(os.homedir(), '.config', 'klinqd', 'session.json');
+}
+const SESSION_FILE = getSessionFile();
 
 export function saveSession(cookies: Cookie[]) {
   // Save all cookies for linkedin.com to ensure session works properly

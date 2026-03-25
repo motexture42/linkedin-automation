@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { launchBrowser } from '../utils/browser';
+import { launchBrowser, typeLikeHuman } from '../utils/browser';
 import { restoreSession } from '../utils/session';
 import { outputJson, outputError } from '../utils/logger';
 
@@ -113,7 +113,7 @@ export const interactCommand = new Command('interact')
                   if (el) el.innerHTML = '';
               }, editorSelector);
 
-              await page.type(editorSelector, options.comment, { delay: 50 });
+              await typeLikeHuman(page, editorSelector, options.comment);
               await new Promise(r => setTimeout(r, 1000));
 
               const commentPosted = await page.evaluate(() => {

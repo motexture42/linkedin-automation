@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { launchBrowser } from '../utils/browser';
+import { launchBrowser, typeLikeHuman } from '../utils/browser';
 import { restoreSession } from '../utils/session';
 import { outputJson, outputError } from '../utils/logger';
 import path from 'path';
@@ -86,9 +86,7 @@ export const postCommand = new Command('post')
       try {
         const editorSelector = '.ql-editor';
         await page.waitForSelector(editorSelector, { timeout: 5000 });
-        await page.click(editorSelector);
-        // Sometimes Puppeteer type misses characters in rich text editors, so we delay
-        await page.type(editorSelector, text, { delay: 50 });
+        await typeLikeHuman(page, editorSelector, text);
       } catch (e) {
         outputError('Could not find text editor area in modal', 2);
         if (browser) await browser.close();
